@@ -2,6 +2,7 @@
 
 #include <initializer_list>
 #include <algorithm>
+#include <exception>
 
 template<class ValueType>
 
@@ -10,7 +11,258 @@ template<class ValueType>
  * Implemented erase, find, lower_bound, insert, all O(log size) time
  * @tparam ValueType
  */
+
 class Set {
+  private:
+    class Node;
+
+  public:
+    Set() {}
+
+    Set(std::initializer_list <ValueType> elems) {
+        for (const auto& i : elems) {
+            insert(i);
+        }
+    }
+
+    Set(std::initializer_list <ValueType>& elems) {
+        for (const auto& i : elems) {
+            insert(i);
+        }
+    }
+
+    template<typename It>
+    Set(It first, It last) {
+        for (auto& it = first; it != last; ++it) {
+            insert(*it);
+        }
+    }
+
+    Set(Set& other) {
+        size_ = other.size_;
+        if (other.root == nullptr) {
+            root = nullptr;
+            return;
+        }
+        root = new Node(other.root->GetData());
+        Copy(other.root, root);
+        UpdateTree(root);
+    }
+
+    Set& operator=(const Set& set) {
+        if (this == &set) {
+            return *this;
+        }
+        EraseAll(root);
+        size_ = set.size_;
+        if (set.root == nullptr) {
+            root = nullptr;
+            return *this;
+        }
+        root = new Node(set.root->GetData());
+        Copy(set.root, root);
+        UpdateTree(root);
+        return *this;
+    }
+
+    ~Set() {
+        EraseAll(root);
+    }
+
+    /**
+     * Iterator for Set
+     */
+    class iterator {
+      public:
+        iterator() {}
+
+        explicit iterator(Node* node) : node(node), end_(false) {}
+
+        explicit iterator(Node* node, bool end_) : node(node), end_(end_) {}
+
+        explicit iterator(const Node* node, bool end_) : node(node), end_(end_) {}
+
+        bool operator==(const iterator& other) const {
+            return node == other.node && end_ == other.end_;
+        }
+
+        bool operator!=(const iterator& other) const {
+            return node != other.node || end_ != other.end_;
+        }
+
+        ValueType operator*() const {
+            return node->GetData();
+        };
+
+        const ValueType* operator->() const {
+            return node->GetDataAddress();
+        }
+
+        iterator operator++() {
+            ToNext();
+            return *this;
+        }
+
+        iterator operator++(int) {
+            iterator tmp = iterator(node, end_);
+            ToNext();
+            return tmp;
+        }
+
+        iterator operator--() {
+            ToPrev();
+            return *this;
+        }
+
+        iterator operator--(int) {
+            iterator tmp = iterator(node, end_);
+            ToPrev();
+            return tmp;
+        }
+
+      private:
+        const Node* node;
+        bool end_ = false;
+
+        /// Function moves iterator forward
+        void ToNext() {
+            if (node->GetRight() == nullptr) {
+                const Node* prv = nullptr;
+                while (node != nullptr && node->GetRight() == prv) {
+                    prv = node;
+                    node = node->GetParent();
+                }
+                if (node == nullptr) {
+                    node = prv;
+                    end_ = true;
+                }
+            } else if (node->GetRight() != nullptr) {
+                node = node->GetRight();
+                while (node->GetLeft() != nullptr) {
+                    node = node->GetLeft();
+                }
+            }
+        }
+
+        /// Function moves iterator backward
+        void ToPrev() {
+            if (end_ == true) {
+                end_ = false;
+                while (node->GetRight() != nullptr) {
+                    node = node->GetRight();
+                }
+            } else if (node->GetLeft() == nullptr) {
+                const Node* prv = nullptr;
+                while (node != nullptr && node->GetLeft() == prv) {
+                    prv = node;
+                    node = node->GetParent();
+                }
+            } else if (node->GetLeft() != nullptr) {
+                node = node->GetLeft();
+                while (node->GetRight() != nullptr) {
+                    node = node->GetRight();
+                }
+            }
+        }
+    };
+
+    /// Function returns count of elements in the set
+    size_t size() const {
+        return size_;
+    }
+
+    /// Function returns true if there are no elements in the set
+    bool empty() const {
+        return size_ == 0;
+    }
+
+    /// Function inserts element in set, O(log size) time
+    void insert(const ValueType& el) {
+        ++size_;
+        if (root == nullptr) {
+            root = new Node(el);
+            return;
+        }
+        Node* inserted = Insert(root, el);
+        if (inserted == nullptr) {
+            --size_;
+        } else {
+            BalanceTree(inserted);
+        }
+    }
+
+    /// Function finds the element in set and returns iterator(nullptr if no element), O(log size) time
+    iterator find(const ValueType& el) const {
+        if (root == nullptr) {
+            return iterator(root, true);
+        }
+        Node* found = Find(root, el);
+        if (found == nullptr) {
+            return iterator(root, true);
+        }
+        return iterator(found);
+    }
+
+    /// Function erases element from set, if no such element does nothing, O(log size) time
+    void erase(const ValueType& el) {
+        if (root == nullptr) {
+            return;
+        }
+        Node* now = Find(root, el);
+        if (now == nullptr) {
+            return;
+        }
+        if (!now->IsLeaf()) {
+            Node* swap = NodeToLeaf(now, now->GetBalance());
+            ValueType sw = swap->GetData();
+            swap->SetData(now->GetData());
+            now->SetData(sw);
+            now = swap;
+        }
+        if (now->GetParent() != nullptr) {
+            if (now->GetParent()->GetLeft() == now) {
+                now->GetParent()->SetLeft(nullptr);
+            } else if (now->GetParent()->GetRight() == now) {
+                now->GetParent()->SetRight(nullptr);
+            }
+        } else {
+            root = nullptr;
+        }
+        BalanceTree(now->GetParent());
+        --size_;
+        delete now;
+    }
+
+    /// Function returns iterator on the first element >= given(nullptr if there is no such element), O(log size) time
+    /// (https://www.cplusplus.com/reference/algorithm/lower_bound/)
+    iterator lower_bound(const ValueType& el) const {
+        if (root == nullptr) {
+            return iterator(root, true);
+        }
+        Node* now = LowerBound(root, el);
+        if (now == nullptr) {
+            return iterator(root, true);
+        }
+        return iterator(now);
+    }
+
+    /// Function returns iterator on the first(the smallest) element, O(log size) time
+    iterator begin() const {
+        Node* node = root;
+        if (node == nullptr) {
+            return iterator(root, true);
+        }
+        while (node->GetLeft() != nullptr) {
+            node = node->GetLeft();
+            node->UpdateNode();
+        }
+        return iterator(node);
+    }
+
+    iterator end() const {
+        return iterator(root, true);
+    }
+
   private:
     /// Balance states for tree
     enum BalanceStates {
@@ -28,32 +280,10 @@ class Set {
      * Implemented rotations used in AVL tree
      */
     class Node {
-      private:
-        Node* left = nullptr;
-        Node* right = nullptr;
-        Node* parent = nullptr;
-        ValueType data_;
-        size_t height = 0;
-        ValueType min_;
-        ValueType max_;
       public:
-        ///Function updates information in node using children
-        void UpdateNode() {
-            height = 0;
-            min_ = data_;
-            max_ = data_;
-            if (!IsLeaf()) {
-                if (left != nullptr) {
-                    min_ = left->GetMin();
-                    height = std::max(height, left->GetHeight());
-                }
-                if (right != nullptr) {
-                    max_ = right->GetMax();
-                    height = std::max(height, right->GetHeight());
-                }
-            }
-            ++height;
-        }
+        Node() {}
+
+        explicit Node(const ValueType& el) : data_(el) {}
 
         void SetData(ValueType data) {
             data_ = data;
@@ -67,25 +297,26 @@ class Set {
             return &this != &other;
         }
 
-        Node() {}
-
-        explicit Node(const ValueType& el) : data_(el) {}
-
-        Node(Node* l, Node* r) : left(l), right(r) {}
-
-
-        BalanceStates GetBalance() {
-            size_t left_height = 0;
-            if (GetLeft() != nullptr) {
-                left_height = GetLeftHeight();
+        /// Function updates information in node using children
+        void UpdateNode() {
+            height = std::max(GetLeftHeight(), GetRightHeight());
+            min_ = data_;
+            max_ = data_;
+            if (!IsLeaf()) {
+                if (left != nullptr) {
+                    min_ = left->GetMin();
+                }
+                if (right != nullptr) {
+                    max_ = right->GetMax();
+                }
             }
-            size_t right_height = 0;
-            if (GetRight() != nullptr) {
-                right_height = GetRightHeight();
-            }
-            if (left_height == right_height) {
-                return Balanced;
-            } else if (left_height > right_height) {
+            ++height;
+        }
+
+        BalanceStates GetBalance() const {
+            size_t left_height = GetLeftHeight();
+            size_t right_height = GetRightHeight();
+            if (left_height > right_height) {
                 if (left_height - right_height == 1) {
                     return LeftBiggerOne;
                 } else if (left_height - right_height == 2) {
@@ -93,7 +324,7 @@ class Set {
                 } else {
                     return Other;
                 }
-            } else {
+            } else if (left_height < right_height) {
                 if (right_height - left_height == 1) {
                     return RightBiggerOne;
                 } else if (right_height - left_height == 2) {
@@ -101,10 +332,12 @@ class Set {
                 } else {
                     return Other;
                 }
+            } else {
+                return Balanced;
             }
         }
 
-        ///Returns a height of right child of node's right child
+        /// Returns a height of right child of node's right child
         size_t GetRightRightHeight() const {
             size_t h = 0;
             if (GetRight() != nullptr) {
@@ -113,7 +346,7 @@ class Set {
             return h;
         }
 
-        ///Returns a height of left child of node's right child
+        /// Returns a height of left child of node's right child
         size_t GetRightLeftHeight() const {
             size_t h = 0;
             if (GetRight() != nullptr) {
@@ -122,7 +355,7 @@ class Set {
             return h;
         }
 
-        ///Returns a height of right child of node's left child
+        /// Returns a height of right child of node's left child
         size_t GetLeftRightHeight() const {
             size_t h = 0;
             if (GetLeft() != nullptr) {
@@ -131,11 +364,29 @@ class Set {
             return h;
         }
 
-        ///Returns a height of left child of node's left child
+        /// Returns a height of left child of node's left child
         size_t GetLeftLeftHeight() const {
             size_t h = 0;
             if (GetLeft() != nullptr) {
                 h = GetLeft()->GetLeftHeight();
+            }
+            return h;
+        }
+
+        /// Returns a height of a right child of the node
+        size_t GetRightHeight() const {
+            size_t h = 0;
+            if (GetRight() != nullptr) {
+                h = GetRight()->GetHeight();
+            }
+            return h;
+        }
+
+        /// Returns a height of a left child of the node
+        size_t GetLeftHeight() const {
+            size_t h = 0;
+            if (GetLeft() != nullptr) {
+                h = GetLeft()->GetHeight();
             }
             return h;
         }
@@ -146,24 +397,6 @@ class Set {
 
         ValueType GetMax() const {
             return max_;
-        }
-
-        ///Returns a height of a right child of the node
-        size_t GetRightHeight() const {
-            size_t h = 0;
-            if (GetRight() != nullptr) {
-                h = GetRight()->GetHeight();
-            }
-            return h;
-        }
-
-        ///Returns a height of a left child of the node
-        size_t GetLeftHeight() const {
-            size_t h = 0;
-            if (GetLeft() != nullptr) {
-                h = GetLeft()->GetHeight();
-            }
-            return h;
         }
 
         size_t GetHeight() const {
@@ -198,7 +431,7 @@ class Set {
             parent = node;
         }
 
-        ///Function defines left child of the node
+        /// Function defines left child of the node
         void SetLeft(Node* node) {
             UpdateNode();
             if (node != nullptr) {
@@ -207,7 +440,7 @@ class Set {
             left = node;
         }
 
-        ///Function defines right child of the node
+        /// Function defines right child of the node
         void SetRight(Node* node) {
             UpdateNode();
             if (node != nullptr) {
@@ -255,9 +488,18 @@ class Set {
             new_node->UpdateNode();
             return SmallRightRotation();
         }
+
+      private:
+        Node* left = nullptr;
+        Node* right = nullptr;
+        Node* parent = nullptr;
+        ValueType data_;
+        size_t height = 0;
+        ValueType min_;
+        ValueType max_;
     };
 
-    ///Function copies structure and data of set  from "from" to "to" (Before calling make sure that root copied data from other root)
+    /// Function copies structure and data of set  from "from" to "to" (Before calling make sure that root copied data from other root)
     void Copy(Node* from, Node* to) {
         if (from->GetLeft() != nullptr) {
             to->SetLeft(new Node(from->GetLeft()->GetData()));
@@ -269,7 +511,7 @@ class Set {
         }
     }
 
-    ///Function Inserts el to set, if element already in set returns nullptr
+    /// Function Inserts el to set, if element already in set returns nullptr
     Node* Insert(Node* node, const ValueType& el) {
         if (el < node->GetData()) {
             if (node->GetLeft() == nullptr) {
@@ -305,7 +547,7 @@ class Set {
         }
     }
 
-    ///Function deletes all nodes
+    /// Function deletes all nodes
     void EraseAll(Node* node) {
         if (node == nullptr) {
             return;
@@ -315,7 +557,7 @@ class Set {
         delete node;
     }
 
-    ///Function finds first node with data >= el
+    /// Function finds first node with data >= el
     Node* LowerBound(Node* node, const ValueType& el) const {
         if (el < node->GetData()) {
             if (node->GetLeft() == nullptr || node->GetLeft()->GetMax() < el) {
@@ -332,275 +574,6 @@ class Set {
         }
     }
 
-  public:
-    /**
-     * Iterator for Set
-     */
-    class iterator {
-      public:
-        iterator() {}
-
-        explicit iterator(Node* node) : node(node), end_(false) {}
-
-        explicit iterator(Node* node, bool end_) : node(node), end_(end_) {}
-
-
-        bool operator==(const iterator& other) const {
-            return node == other.node && end_ == other.end_;
-        }
-
-        bool operator!=(const iterator& other) const {
-            return node != other.node || end_ != other.end_;
-        }
-
-        ValueType operator*() const {
-            return node->GetData();
-        };
-
-        const ValueType* operator->() const {
-            return node->GetDataAddress();
-        }
-
-        iterator operator++() {
-            if (node->GetRight() == nullptr) {
-                const Node* prv = nullptr;
-                while (node != nullptr && node->GetRight() == prv) {
-                    prv = node;
-                    node = node->GetParent();
-                }
-                if (node == nullptr) {
-                    node = prv;
-                    end_ = true;
-                }
-            } else if (node->GetRight() != nullptr) {
-                node = node->GetRight();
-                while (node->GetLeft() != nullptr) {
-                    node = node->GetLeft();
-                }
-            }
-            return *this;
-        }
-
-        iterator operator++(int) {
-            if (node->GetRight() == nullptr) {
-                const Node* prv = nullptr;
-                while (node != nullptr && node->GetRight() == prv) {
-                    prv = node;
-                    node = node->GetParent();
-                }
-                if (node == nullptr) {
-                    node = prv;
-                    end_ = true;
-                }
-            } else if (node->GetRight() != nullptr) {
-                node = node->GetRight();
-                while (node->GetLeft() != nullptr) {
-                    node = node->GetLeft();
-                }
-            }
-            return *this;
-        }
-
-        iterator operator--() {
-            if (end_ == true) {
-                end_ = false;
-                while (node->GetRight() != nullptr) {
-                    node = node->GetRight();
-                }
-            } else if (node->GetLeft() == nullptr) {
-                const Node* prv = nullptr;
-                while (node != nullptr && node->GetLeft() == prv) {
-                    prv = node;
-                    node = node->GetParent();
-                }
-            } else if (node->GetLeft() != nullptr) {
-                node = node->GetLeft();
-                while (node->GetRight() != nullptr) {
-                    node = node->GetRight();
-                }
-            }
-            return *this;
-        }
-
-        iterator operator--(int) {
-            if (end_ == true) {
-                end_ = false;
-                while (node->GetRight() != nullptr) {
-                    node = node->GetRight();
-                }
-            } else if (node->GetLeft() == nullptr) {
-                const Node* prv = nullptr;
-                while (node != nullptr && node->GetLeft() == prv) {
-                    prv = node;
-                    node = node->GetParent();
-                }
-            } else if (node->GetLeft() != nullptr) {
-                node = node->GetLeft();
-                while (node->GetRight() != nullptr) {
-                    node = node->GetRight();
-                }
-            }
-            return *this;
-        }
-
-      private:
-        const Node* node;
-        bool end_ = false;
-    };
-
-
-    Set() {}
-
-    Set(std::initializer_list <ValueType> elems) {
-        for (const auto& i : elems) {
-            insert(i);
-        }
-    }
-
-    Set(std::initializer_list <ValueType>& elems) {
-        for (const auto& i : elems) {
-            insert(i);
-        }
-    }
-
-    template<typename It>
-    Set(It first, It last) {
-        for (auto& it = first; it != last; ++it) {
-            insert(*it);
-        }
-    }
-
-
-    Set(Set& other) {
-        size_ = other.size_;
-        if (other.root == nullptr) {
-            root = nullptr;
-            return;
-        }
-        root = new Node(other.root->GetData());
-        Copy(other.root, root);
-        UpdateTree(root);
-    }
-
-    Set& operator=(const Set& set) {
-        if (this == &set) {
-            return *this;
-        }
-        EraseAll(root);
-        size_ = set.size_;
-        if (set.root == nullptr) {
-            root = nullptr;
-            return *this;
-        }
-        root = new Node(set.root->GetData());
-        Copy(set.root, root);
-        UpdateTree(root);
-        return *this;
-    }
-
-    ~Set() {
-        EraseAll(root);
-    }
-
-    /// Function returns count of elements in the set
-    size_t size() const {
-        return size_;
-    }
-
-    /// Function returns true if there are no elements in the set
-    bool empty() const {
-        return size_ == 0;
-    }
-
-
-    /// Function inserts element in set, O(log size) time
-    void insert(const ValueType& el) {
-        ++size_;
-        if (root == nullptr) {
-            root = new Node(el);
-            return;
-        }
-        Node* inserted = Insert(root, el);
-        if (inserted == nullptr) {
-            --size_;
-        } else {
-            BalanceTree(inserted);
-        }
-    }
-
-    /// Function finds the element in set and returns iterator(nullptr if no element), O(log size) time
-    iterator find(const ValueType& el) const {
-        if (root == nullptr) {
-            return iterator(root, true);
-        }
-        Node* found = Find(root, el);
-        if (found == nullptr) {
-            return iterator(root, true);
-        }
-        return iterator(found);
-    }
-
-    /// Function erases element from set, if no such element does nothing, O(log size) time
-    void erase(const ValueType& el) {
-        if (root == nullptr) {
-            return;
-        }
-        Node* now = Find(root, el);
-        if (now == nullptr) {
-            return;
-        }
-        if (!now->IsLeaf()) {
-            Node* swap = NodeToLeaf(now, now->GetBalance());
-            ValueType sw = swap->GetData();
-            swap->SetData(now->GetData());
-            now->SetData(sw);
-            now = swap;
-        }
-        if (now->GetParent() == nullptr) {
-            root = nullptr;
-        } else {
-            if (now->GetParent()->GetLeft() == now) {
-                now->GetParent()->SetLeft(nullptr);
-            } else if (now->GetParent()->GetRight() == now) {
-                now->GetParent()->SetRight(nullptr);
-            }
-        }
-        BalanceTree(now->GetParent());
-        --size_;
-        delete now;
-    }
-
-    /// Function returns iterator on the first element >= given(nullptr if there is no such element), O(log size) time
-    /// (https://www.cplusplus.com/reference/algorithm/lower_bound/)
-    iterator lower_bound(const ValueType& el) const {
-        if (root == nullptr) {
-            return iterator(root, true);
-        }
-        Node* now = LowerBound(root, el);
-        if (now == nullptr) {
-            return iterator(root, true);
-        }
-        return iterator(now);
-    }
-
-    /// Function returns iterator on the first(the smallest) element, O(log size) time
-    iterator begin() const {
-        Node* node = root;
-        if (node == nullptr) {
-            return iterator(root, true);
-        }
-        while (node->GetLeft() != nullptr) {
-            node = node->GetLeft();
-            node->UpdateNode();
-        }
-        return iterator(node);
-    }
-
-    iterator end() const {
-        return iterator(root, true);
-    }
-
-  private:
     Node* NodeToLeaf(Node* swap, BalanceStates balance) {
         if (balance == BalanceStates::Balanced || balance == BalanceStates::LeftBiggerOne) {
             swap = swap->GetLeft();
@@ -629,8 +602,6 @@ class Set {
                 } else {
                     swap->GetParent()->SetLeft(swap->GetRight());
                 }
-            } else {
-                //throw std::exception();
             }
         }
         return swap;
@@ -691,15 +662,13 @@ class Set {
         }
     }
 
-    ///Function makes tree balanced
+    /// Function makes tree balanced
     void BalanceTree(Node* node) {
         if (node == nullptr) {
             return;
         }
         BalanceStates balance = node->GetBalance();
-        if (balance == Other) {
-            //throw std::exception();
-        } else if (balance == LeftBiggerTwo) {
+        if (balance == LeftBiggerTwo) {
             BalanceLeftTree(node);
         } else if (balance == RightBiggerTwo) {
             BalanceRightTree(node);
@@ -711,7 +680,6 @@ class Set {
         BalanceTree(node->GetParent());
     }
 
-  private:
     size_t size_ = 0;
     Node* root = nullptr;
 };
